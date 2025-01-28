@@ -4,12 +4,17 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { config } from "../config";
 import { AuthRequest } from "../middlewares/auth.middleware";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, gender, email, password, role } = req.body;
 
-    // Validate role
+    if (!name || !email || !password) {
+      res.status(400).json({ message: "Missing required fields" });
+      return;
+    }
+
     if (role && !["ADMIN", "INSTRUCTOR"].includes(role)) {
       res.status(400).json({ message: "Invalid role" });
       return;
@@ -24,9 +29,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
       data: {
-        name,
+        name: name,
         gender: gender,
-        email,
+        email: email,
         password: hashedPassword,
         role: role || "INSTRUCTOR",
       },
@@ -37,25 +42,31 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         role: true,
       },
     });
-
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      config.jwtSecret as string,
-      { expiresIn: "1d" }
-    );
-
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
-      path: "/",
-    });
-    res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.status(201).json({ user });
+    return;
   } catch (error) {
-    res.status(500).json({ message: "Error registering user" });
+    if (error instanceof PrismaClientKnownRequestError) {
+      switch (error.code) {
+        case "P2002":
+          res.status(400).json({
+            message: "A user with this email already exists",
+            code: error.code,
+          });
+          break;
+        case "P2000":
+          res.status(400).json({
+            message: "Input data is invalid",
+            code: error.code,
+          });
+          break;
+        default:
+          res.status(500).json({
+            message: "Database error",
+            code: error.code,
+          });
+      }
+      return;
+    }
   }
 };
 
@@ -83,16 +94,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
           config.jwtSecret as string,
           { expiresIn: "1d" }
         );
-        res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
-        res.setHeader("Access-Control-Allow-Credentials", "true");
-        // Set the cookie and headers here without sending the response
-        res.cookie("token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production", // Use secure flag based on environment
-          sameSite: "none",
-          maxAge: 24 * 60 * 60 * 1000, // 1 day
-          path: "/",
-        });
 
         responseData = {
           user: {

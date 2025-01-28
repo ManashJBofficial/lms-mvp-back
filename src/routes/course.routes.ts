@@ -8,6 +8,8 @@ import {
   addInstructor,
   removeInstructor,
   addInstructorByCode,
+  getInstructorCourseDetails,
+  addTeachersFromFile,
 } from "../controllers/course.controller";
 import {
   authenticateToken,
@@ -41,6 +43,13 @@ router.delete(
   deleteCourse
 );
 
+router.get(
+  "/instructor/details",
+  authenticateToken,
+  authorizeRoles(User_role.INSTRUCTOR),
+  getInstructorCourseDetails
+);
+
 // Instructor management routes (Admin only)
 router.post(
   "/instructor",
@@ -60,6 +69,13 @@ router.post(
   authenticateToken,
   authorizeRoles(User_role.INSTRUCTOR),
   addInstructorByCode
+);
+
+router.post(
+  "/upload-teachers",
+  authenticateToken,
+  authorizeRoles(User_role.ADMIN),
+  addTeachersFromFile
 );
 
 export default router;
