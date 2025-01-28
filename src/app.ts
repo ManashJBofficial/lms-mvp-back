@@ -10,29 +10,24 @@ const app: Application = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
-// Middleware
 app.use(helmet());
 app.use(express.json());
 
-// Routes
 app.use("/api", routes);
 
-// Health check
 app.get("/health", (req: Request, res: Response) => {
   res.status(200).json({ status: "OK" });
 });
 
-// Error handling
 app.use(errorHandler);
 
-// Handle 404
 app.use((req: Request, res: Response) => {
   res.status(404).json({ message: "Not Found" });
 });

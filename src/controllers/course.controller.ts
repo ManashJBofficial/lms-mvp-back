@@ -1,8 +1,28 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
 import { AuthRequest } from "../middlewares/auth.middleware";
+import multer from "multer";
+import * as XLSX from "xlsx";
+import { prisma } from "../config/db";
+import bcrypt from "bcryptjs";
 
-const prisma = new PrismaClient();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (
+      file.mimetype === "application/vnd.ms-excel" ||
+      file.mimetype ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      file.mimetype === "text/csv"
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid file type. Only Excel and CSV files are allowed."));
+    }
+  },
+}).single("file");
 
 // Create a new course (Admin only)
 export const createCourse = async (
@@ -53,6 +73,9 @@ export const getCourses = async (
           },
         },
         Notice: true,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
 
@@ -136,7 +159,6 @@ export const deleteCourse = async (
   }
 };
 
-// Add multiple instructors to course
 export const addInstructor = async (
   req: Request<{}, {}, { courseId: string; userIds: string[] }>,
   res: Response
@@ -144,14 +166,12 @@ export const addInstructor = async (
   try {
     const { courseId, userIds } = req.body;
 
-    // Get current instructor assignments
     const currentInstructors = await prisma.courseInstructor.findMany({
       where: { courseId },
       select: { userId: true },
     });
     const currentInstructorIds = currentInstructors.map((i) => i.userId);
 
-    // Calculate instructors to add and remove
     const instructorsToAdd = userIds.filter(
       (id) => !currentInstructorIds.includes(id)
     );
@@ -159,9 +179,7 @@ export const addInstructor = async (
       (id) => !userIds.includes(id)
     );
 
-    // Perform all database operations in a transaction
     await prisma.$transaction(async (tx) => {
-      // Remove instructors that are no longer in the list
       if (instructorsToRemove.length > 0) {
         await tx.courseInstructor.deleteMany({
           where: {
@@ -171,7 +189,6 @@ export const addInstructor = async (
         });
       }
 
-      // Add new instructors
       if (instructorsToAdd.length > 0) {
         await tx.courseInstructor.createMany({
           data: instructorsToAdd.map((userId) => ({
@@ -200,7 +217,6 @@ export const removeInstructor = async (
   try {
     const { courseId, userIds } = req.body;
 
-    // Delete all instructor assignments in a single transaction
     await prisma.$transaction(
       userIds.map((userId: string) =>
         prisma.courseInstructor.delete({
@@ -245,7 +261,6 @@ export const addInstructorByCode = async (
       return;
     }
 
-    // Find course by code
     const course = await prisma.course.findFirst({
       where: {
         code: code,
@@ -258,7 +273,6 @@ export const addInstructorByCode = async (
       return;
     }
 
-    // Check if instructor is already assigned to the course
     const existingAssignment = await prisma.courseInstructor.findFirst({
       where: {
         courseId: course.id,
@@ -273,7 +287,6 @@ export const addInstructorByCode = async (
       return;
     }
 
-    // Add instructor to course
     await prisma.courseInstructor.create({
       data: {
         courseId: course.id,
@@ -287,5 +300,188 @@ export const addInstructorByCode = async (
   } catch (error: any) {
     console.error("Error adding instructor to course:", error);
     res.status(500).json({ message: "Error adding instructor to course" });
+  }
+};
+
+export const getInstructorCourseDetails = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const instructorCourses = await prisma.courseInstructor.findMany({
+      where: {
+        userId: userId,
+        Course: {
+          isDeleted: false,
+        },
+      },
+      include: {
+        Course: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            Notice: {
+              where: {
+                NoticeView: {
+                  none: {
+                    userId: userId,
+                  },
+                },
+              },
+              select: {
+                id: true,
+                title: true,
+                createdAt: true,
+                _count: {
+                  select: {
+                    NoticeView: true,
+                    Response: true,
+                  },
+                },
+              },
+              orderBy: {
+                createdAt: "desc",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const courseDetails = instructorCourses.map(({ Course }) => ({
+      id: Course.id,
+      name: Course.name,
+      code: Course.code,
+      activeNotices: Course.Notice.map((notice) => ({
+        id: notice.id,
+        title: notice.title,
+        createdAt: notice.createdAt,
+        viewCount: notice._count.NoticeView,
+        responseCount: notice._count.Response,
+      })),
+    }));
+
+    res.json({ courses: courseDetails });
+  } catch (error) {
+    console.error("Error fetching instructor course details:", error);
+    res.status(500).json({ message: "Error fetching course details" });
+  }
+};
+
+// Add teachers from Excel/CSV file
+export const addTeachersFromFile = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    if (!process.env.DEFAULT_PASSWORD) {
+      throw new Error("DEFAULT_PASSWORD environment variable is not set");
+    }
+
+    const hashedPassword = await bcrypt.hash(process.env.DEFAULT_PASSWORD, 10);
+
+    upload(req, res, async (err) => {
+      if (err) {
+        res.status(400).json({ message: err.message });
+        return;
+      }
+
+      if (!req.file) {
+        res.status(400).json({ message: "No file uploaded" });
+        return;
+      }
+
+      try {
+        const workbook = XLSX.read(req.file.buffer);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(worksheet);
+
+        const results = {
+          success: 0,
+          failed: 0,
+          errors: [] as string[],
+        };
+
+        for (const row of data) {
+          const email = (row as any).email || (row as any).Email;
+          const name = (row as any).name || (row as any).Name;
+          const courseCode = (row as any).courseCode || (row as any).CourseCode;
+
+          if (!email || !courseCode) {
+            results.failed++;
+            results.errors.push(
+              `Missing email or course code for row: ${JSON.stringify(row)}`
+            );
+            continue;
+          }
+
+          try {
+            const course = await prisma.course.findUnique({
+              where: { code: courseCode, isDeleted: false },
+            });
+
+            if (!course) {
+              results.failed++;
+              results.errors.push(`Course not found with code: ${courseCode}`);
+              continue;
+            }
+
+            const user = await prisma.user.upsert({
+              where: { email },
+              update: {},
+              create: {
+                email,
+                name: name || email.split("@")[0],
+                password: hashedPassword,
+                gender: "MALE",
+                role: "INSTRUCTOR",
+              },
+            });
+
+            await prisma.courseInstructor.upsert({
+              where: {
+                courseId_userId: {
+                  courseId: course.id,
+                  userId: user.id,
+                },
+              },
+              update: {},
+              create: {
+                courseId: course.id,
+                userId: user.id,
+              },
+            });
+
+            results.success++;
+          } catch (error) {
+            results.failed++;
+            results.errors.push(
+              `Error processing ${email}: ${(error as Error).message}`
+            );
+          }
+        }
+
+        res.json({
+          message: "File processed successfully",
+          results,
+        });
+      } catch (error) {
+        res.status(500).json({
+          message: "Error processing file",
+          error: (error as Error).message,
+        });
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error processing request" });
   }
 };
