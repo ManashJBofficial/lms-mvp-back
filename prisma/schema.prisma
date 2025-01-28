@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Course {
+  id               String             @id @default(uuid())
+  name             String             @db.VarChar(255)
+  code             String             @unique @db.VarChar(50)
+  description      String             @db.Text
+  isDeleted        Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  CourseInstructor CourseInstructor[]
+  Notice           Notice[]
+}
+
+model CourseInstructor {
+  id        String   @id @default(uuid())
+  courseId  String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@index([courseId])
+  @@index([userId])
+}
+
+model Notice {
+  id         String       @id @default(uuid())
+  title      String       @db.VarChar(255)
+  content    String       @db.Text
+  courseId   String
+  postedById String
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  Course     Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  User       User         @relation(fields: [postedById], references: [id], onDelete: Cascade)
+  NoticeView NoticeView[]
+  Response   Response[]
+
+  @@index([courseId])
+  @@index([postedById])
+}
+
+model NoticeView {
+  id       String   @id @default(uuid())
+  userId   String
+  noticeId String
+  viewedAt DateTime @default(now())
+  Notice   Notice   @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  User     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, noticeId])
+  @@index([noticeId])
+  @@index([userId])
+}
+
+model Response {
+  id        String   @id @default(uuid())
+  content   String   @db.Text
+  noticeId  String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Notice    Notice   @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId])
+  @@index([userId])
+}
+
+model User {
+  id               String             @id @default(uuid())
+  name             String             @db.VarChar(255)
+  gender           Gender
+  email            String             @unique @db.VarChar(255)
+  password         String             @db.VarChar(255)
+  role             User_role          @default(INSTRUCTOR)
+  emailVerified    Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  CourseInstructor CourseInstructor[]
+  Notice           Notice[]
+  NoticeView       NoticeView[]
+  Response         Response[]
+}
+
+enum User_role {
+  ADMIN
+  INSTRUCTOR
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
