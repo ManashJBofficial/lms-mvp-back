@@ -90,7 +90,7 @@ router.use("/dashboard", dashboardRoutes);
 ### Clone & Install
 ```bash
 git clone <repository-url>
-cd lms-backend
+cd lms-mvp-back
 npm install
 ```
 
